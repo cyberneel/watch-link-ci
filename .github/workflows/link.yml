@@ -1,14 +1,13 @@
 name: link-watch
-# Compiles AND links a watchOS app from Swift source using Apple's toolchain.
-# arm64e pointer-authentication is ABI-sensitive: the Linux compiler generates
-# ptrauth-incompatible code (EXC_ARM_PAC_FAIL at runtime), so Apple's compiler
-# must produce the code, not just link it. Source is pulled over the tailnet from
-# the dev box and never touches GitHub; only the built binary is returned.
+# Compiles + links a watchOS app from Swift source using Apple's toolchain (arm64e ptrauth
+# needs Apple's compiler, not just linker). The source arrives as an ENCRYPTED, base64 input
+# and is decrypted with a shared secret — it's never readable in this public repo, and there's
+# no tailnet round-trip, so the run is fast.
 on:
   workflow_dispatch:
     inputs:
-      src_url:
-        description: "Tailnet HTTPS URL of the watch source tarball"
+      src_b64:
+        description: "base64(openssl-aes-256-cbc(source tarball)) — encrypted, tiny"
         required: true
       product:
         description: "Executable name to produce"
@@ -16,23 +15,18 @@ on:
       deployment:
         description: "watchOS deployment target"
         default: "26.0"
-      box_ip:
-        description: "Tailnet IP of the dev box (MagicDNS may not resolve on the runner)"
-        required: true
 jobs:
   build:
     runs-on: macos-latest
+    env:
+      SRC_KEY: ${{ secrets.SRC_KEY }}
     steps:
-      - name: Join tailnet
-        uses: tailscale/github-action@v3
-        with:
-          authkey: ${{ secrets.TS_AUTHKEY }}
-      - name: Pull source from dev box (tailnet only)
+      - name: Decrypt source
         run: |
-          HOST=$(printf '%s' "${{ inputs.src_url }}" | sed -E 's#https?://([^/]+)/.*#\1#')
-          echo "${{ inputs.box_ip }} $HOST" | sudo tee -a /etc/hosts
-          curl -fL --retry 8 --retry-connrefused "${{ inputs.src_url }}" -o src.tar.gz
-          mkdir src && tar xzf src.tar.gz -C src
+          mkdir src
+          printf '%s' "${{ inputs.src_b64 }}" | base64 -d \
+            | openssl enc -d -aes-256-cbc -pbkdf2 -pass env:SRC_KEY \
+            | tar xzf - -C src
           echo "sources:"; find src -name '*.swift'
       - name: Compile + link arm64e watchOS app (Apple toolchain)
         run: |

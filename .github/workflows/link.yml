@@ -42,9 +42,26 @@ jobs:
             -Xlinker -rpath -Xlinker @executable_path/../../Frameworks \
             -o "${{ inputs.product }}"
           file "${{ inputs.product }}"
-      - name: Return linked binary
+      - name: Compile app icon (actool)
+        run: |
+          mkdir -p out
+          if [ -d objs/AppIcon.xcassets ]; then
+            actool objs/AppIcon.xcassets --compile out --platform watchos \
+              --minimum-deployment-target "${{ inputs.deployment }}" \
+              --app-icon AppIcon --output-partial-info-plist out/icon-info.plist
+            echo "icon compiled:"; ls -la out
+          else
+            echo "no AppIcon.xcassets provided; skipping icon"
+          fi
+      - name: Bundle outputs
+        run: |
+          mkdir -p bundle && mv "${{ inputs.product }}" bundle/
+          [ -f out/Assets.car ] && cp out/Assets.car bundle/ || true
+          [ -f out/icon-info.plist ] && cp out/icon-info.plist bundle/ || true
+          ls -la bundle
+      - name: Return linked binary + assets
         uses: actions/upload-artifact@v4
         with:
           name: watch-binary
-          path: ${{ inputs.product }}
+          path: bundle/
           retention-days: 1

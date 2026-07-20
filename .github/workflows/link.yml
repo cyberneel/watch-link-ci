@@ -1,7 +1,7 @@
 name: link-watch
 # Links Linux-compiled arm64e watchOS objects using Xcode's linker (arm64e ptrauth
 # needs Apple's ld, which the open-source lld lacks). Objects are pulled over the
-# tailnet from the dev box — they never touch GitHub. Only the linked binary is returned.
+# tailnet from the dev box; they never touch GitHub. Only the linked binary is returned.
 on:
   workflow_dispatch:
     inputs:

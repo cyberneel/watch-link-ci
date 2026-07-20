@@ -14,6 +14,9 @@ on:
       deployment:
         description: "watchOS deployment target"
         default: "26.0"
+      box_ip:
+        description: "Tailnet IP of the dev box (for /etc/hosts, since MagicDNS may not resolve on the runner)"
+        required: true
 jobs:
   link:
     runs-on: macos-latest
@@ -24,7 +27,9 @@ jobs:
           authkey: ${{ secrets.TS_AUTHKEY }}
       - name: Pull objects from dev box (tailnet only)
         run: |
-          curl -fL --retry 5 "${{ inputs.objects_url }}" -o objects.tar.gz
+          HOST=$(printf '%s' "${{ inputs.objects_url }}" | sed -E 's#https?://([^/]+)/.*#\1#')
+          echo "${{ inputs.box_ip }} $HOST" | sudo tee -a /etc/hosts
+          curl -fL --retry 8 --retry-connrefused "${{ inputs.objects_url }}" -o objects.tar.gz
           mkdir objs && tar xzf objects.tar.gz -C objs
           echo "objects:"; find objs -name '*.o'
       - name: Link arm64e watchOS executable

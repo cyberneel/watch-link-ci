@@ -21,6 +21,8 @@ jobs:
     env:
       SRC_KEY: ${{ secrets.SRC_KEY }}
     steps:
+      - name: Checkout (for the placeholder app icon)
+        uses: actions/checkout@v4
       - name: Decrypt source
         run: |
           mkdir src
@@ -28,6 +30,8 @@ jobs:
             | openssl enc -d -aes-256-cbc -pbkdf2 -pass env:SRC_KEY \
             | tar xzf - -C src
           echo "sources:"; find src -name '*.swift'
+          # a per-app icon shipped in the source overrides the repo placeholder
+          [ -d src/AppIcon.xcassets ] && cp -a src/AppIcon.xcassets ./AppIcon.xcassets || true
       - name: Compile + link arm64e watchOS app (Apple toolchain)
         run: |
           xcrun --sdk watchos swiftc \
@@ -41,8 +45,8 @@ jobs:
       - name: Compile app icon (actool)
         run: |
           mkdir -p out
-          if [ -d src/AppIcon.xcassets ]; then
-            actool src/AppIcon.xcassets --compile out --platform watchos \
+          if [ -d AppIcon.xcassets ]; then
+            actool AppIcon.xcassets --compile out --platform watchos \
               --minimum-deployment-target "${{ inputs.deployment }}" \
               --app-icon AppIcon --output-partial-info-plist out/icon-info.plist
             echo "icon compiled:"; ls -la out

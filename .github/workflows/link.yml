@@ -1,12 +1,14 @@
 name: link-watch
-# Links Linux-compiled arm64e watchOS objects using Xcode's linker (arm64e ptrauth
-# needs Apple's ld, which the open-source lld lacks). Objects are pulled over the
-# tailnet from the dev box; they never touch GitHub. Only the linked binary is returned.
+# Compiles AND links a watchOS app from Swift source using Apple's toolchain.
+# arm64e pointer-authentication is ABI-sensitive: the Linux compiler generates
+# ptrauth-incompatible code (EXC_ARM_PAC_FAIL at runtime), so Apple's compiler
+# must produce the code, not just link it. Source is pulled over the tailnet from
+# the dev box and never touches GitHub; only the built binary is returned.
 on:
   workflow_dispatch:
     inputs:
-      objects_url:
-        description: "Tailnet HTTPS URL of the objects tarball"
+      src_url:
+        description: "Tailnet HTTPS URL of the watch source tarball"
         required: true
       product:
         description: "Executable name to produce"
@@ -15,29 +17,29 @@ on:
         description: "watchOS deployment target"
         default: "26.0"
       box_ip:
-        description: "Tailnet IP of the dev box (for /etc/hosts, since MagicDNS may not resolve on the runner)"
+        description: "Tailnet IP of the dev box (MagicDNS may not resolve on the runner)"
         required: true
 jobs:
-  link:
+  build:
     runs-on: macos-latest
     steps:
       - name: Join tailnet
         uses: tailscale/github-action@v3
         with:
           authkey: ${{ secrets.TS_AUTHKEY }}
-      - name: Pull objects from dev box (tailnet only)
+      - name: Pull source from dev box (tailnet only)
         run: |
-          HOST=$(printf '%s' "${{ inputs.objects_url }}" | sed -E 's#https?://([^/]+)/.*#\1#')
+          HOST=$(printf '%s' "${{ inputs.src_url }}" | sed -E 's#https?://([^/]+)/.*#\1#')
           echo "${{ inputs.box_ip }} $HOST" | sudo tee -a /etc/hosts
-          curl -fL --retry 8 --retry-connrefused "${{ inputs.objects_url }}" -o objects.tar.gz
-          mkdir objs && tar xzf objects.tar.gz -C objs
-          echo "objects:"; find objs -name '*.o'
-      - name: Link arm64e watchOS executable
+          curl -fL --retry 8 --retry-connrefused "${{ inputs.src_url }}" -o src.tar.gz
+          mkdir src && tar xzf src.tar.gz -C src
+          echo "sources:"; find src -name '*.swift'
+      - name: Compile + link arm64e watchOS app (Apple toolchain)
         run: |
-          SDK=$(xcrun --sdk watchos --show-sdk-path)
           xcrun --sdk watchos swiftc \
             -target arm64e-apple-watchos${{ inputs.deployment }} \
-            $(find objs -name '*.o') \
+            -parse-as-library -O \
+            $(find src -name '*.swift') \
             -Xlinker -rpath -Xlinker @executable_path/Frameworks \
             -Xlinker -rpath -Xlinker @executable_path/../../Frameworks \
             -o "${{ inputs.product }}"
@@ -45,13 +47,11 @@ jobs:
       - name: Compile app icon (actool)
         run: |
           mkdir -p out
-          if [ -d objs/AppIcon.xcassets ]; then
-            actool objs/AppIcon.xcassets --compile out --platform watchos \
+          if [ -d src/AppIcon.xcassets ]; then
+            actool src/AppIcon.xcassets --compile out --platform watchos \
               --minimum-deployment-target "${{ inputs.deployment }}" \
               --app-icon AppIcon --output-partial-info-plist out/icon-info.plist
             echo "icon compiled:"; ls -la out
-          else
-            echo "no AppIcon.xcassets provided; skipping icon"
           fi
       - name: Bundle outputs
         run: |
@@ -59,7 +59,7 @@ jobs:
           [ -f out/Assets.car ] && cp out/Assets.car bundle/ || true
           [ -f out/icon-info.plist ] && cp out/icon-info.plist bundle/ || true
           ls -la bundle
-      - name: Return linked binary + assets
+      - name: Return built binary + assets
         uses: actions/upload-artifact@v4
         with:
           name: watch-binary

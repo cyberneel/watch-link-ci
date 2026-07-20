@@ -42,15 +42,20 @@ jobs:
             -Xlinker -rpath -Xlinker @executable_path/../../Frameworks \
             -o "${{ inputs.product }}"
           file "${{ inputs.product }}"
-      - name: Compile app icon (actool)
+      - name: App icon (prebuilt Assets.car; actool only for a custom icon)
         run: |
           mkdir -p out
-          if [ -d AppIcon.xcassets ]; then
-            actool AppIcon.xcassets --compile out --platform watchos \
+          if [ -d src/AppIcon.xcassets ]; then
+            # custom per-app icon was shipped — compile it fresh (~20s)
+            actool src/AppIcon.xcassets --compile out --platform watchos \
               --minimum-deployment-target "${{ inputs.deployment }}" \
               --app-icon AppIcon --output-partial-info-plist out/icon-info.plist
-            echo "icon compiled:"; ls -la out
+          else
+            # static placeholder — use the committed pre-compiled car (skips actool, ~20s faster)
+            cp prebuilt-icon/Assets.car out/Assets.car
+            cp prebuilt-icon/icon-info.plist out/icon-info.plist
           fi
+          ls -la out
       - name: Bundle outputs
         run: |
           mkdir -p bundle && mv "${{ inputs.product }}" bundle/

@@ -28,21 +28,36 @@ jobs:
           mkdir -p build out
           SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
           TRIPLE="arm64-apple-ios${{ inputs.deployment }}"
+          # An output-file-map pins where the const-values land. Passing -emit-const-values with
+          # a plain -o silently produces nothing, which is how the first run failed.
+          cat > build/map.json <<'MAP'
+          {
+            "golden/GoldenIntents.swift": {
+              "object": "build/Golden.o",
+              "const-values": "build/Golden.swiftconstvalues"
+            }
+          }
+          MAP
           # The const-extraction pass is the processor's real input in compile-time mode. The
           # gather list names the protocols whose conformers get their literals recorded.
           xcrun --sdk iphoneos swiftc \
             -target "$TRIPLE" -sdk "$SDK" \
-            -c golden/GoldenIntents.swift -o build/Golden.o \
+            -c golden/GoldenIntents.swift \
+            -output-file-map build/map.json \
             -emit-const-values \
             -Xfrontend -const-gather-protocols-file -Xfrontend golden/gather.json
           find . -name '*.swiftconstvalues' -print
+          test -s build/Golden.swiftconstvalues
 
       - name: Run Apple's appintentsmetadataprocessor
         run: |
           set -eux
           DEV="$(xcode-select -p)"
-          PROC="$DEV/usr/bin/appintentsmetadataprocessor"
-          find build . -maxdepth 2 -name '*.swiftconstvalues' > build/constvals.txt
+          # Not in Developer/usr/bin on Xcode 26.6 — locate it rather than assume.
+          PROC="$(find "$DEV" -name appintentsmetadataprocessor -type f 2>/dev/null | head -1)"
+          test -n "$PROC" || { echo "processor not found under $DEV"; exit 1; }
+          echo "processor: $PROC"
+          echo build/Golden.swiftconstvalues > build/constvals.txt
           echo golden/GoldenIntents.swift > build/sources.txt
           mkdir -p "out/Golden.app"
           "$PROC" \

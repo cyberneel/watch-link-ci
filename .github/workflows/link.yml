@@ -1,5 +1,5 @@
 name: link-watch
-# Compiles + links a watchOS app from Swift source using Apple's toolchain (arm64e ptrauth
+# Compiles + links a watchOS app from Swift source using Apple's toolchain (Apple's compiler
 # needs Apple's compiler, not just linker). The source arrives as an ENCRYPTED, base64 input
 # and is decrypted with a shared secret — it's never readable in this public repo, and there's
 # no tailnet round-trip, so the run is fast.
@@ -30,15 +30,24 @@ jobs:
             | openssl enc -d -aes-256-cbc -pbkdf2 -pass env:SRC_KEY \
             | tar xzf - -C src
           echo "sources:"; find src -name '*.swift'
-      - name: Compile + link arm64e watchOS app (Apple toolchain)
+      - name: Compile + link watchOS app (arm64 + arm64_32, Apple toolchain)
         run: |
-          xcrun --sdk watchos swiftc \
-            -target arm64e-apple-watchos${{ inputs.deployment }} \
-            -parse-as-library -O \
-            $(find src -name '*.swift') \
-            -Xlinker -rpath -Xlinker @executable_path/Frameworks \
-            -Xlinker -rpath -Xlinker @executable_path/../../Frameworks \
-            -o "${{ inputs.product }}"
+          set -eux
+          # App Store validation rejects arm64e for watchOS: it wants arm64 for every target plus
+          # arm64_32 whenever MinimumOSVersion is below 27.0. Build both and fuse them.
+          SRCS=$(find src -name '*.swift')
+          for ARCH in arm64 arm64_32; do
+            xcrun --sdk watchos swiftc \
+              -target $ARCH-apple-watchos${{ inputs.deployment }} \
+              -parse-as-library -O \
+              $SRCS \
+              -Xlinker -rpath -Xlinker @executable_path/Frameworks \
+              -Xlinker -rpath -Xlinker @executable_path/../../Frameworks \
+              -o "${{ inputs.product }}.$ARCH"
+          done
+          xcrun lipo -create "${{ inputs.product }}.arm64" "${{ inputs.product }}.arm64_32" \
+            -output "${{ inputs.product }}"
+          xcrun lipo -info "${{ inputs.product }}"
           file "${{ inputs.product }}"
       - name: Icon fingerprint
         id: icon

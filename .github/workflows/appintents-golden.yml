@@ -22,6 +22,16 @@ jobs:
           echo "iOS SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
           ls "$(xcode-select -p)/usr/bin" | grep -i appintents || echo "processor NOT in usr/bin"
 
+      - name: Xcode / SDK facts (DT* Info.plist values for the Linux build)
+        run: |
+          set -eux
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          plutil -p "$SDK/SDKSettings.plist" | grep -iE '"(CanonicalName|Version|ProductBuildVersion)"' || true
+          plutil -p "$(xcode-select -p)/Platforms/iPhoneOS.platform/Info.plist" 2>/dev/null | grep -iE '"(ProductBuildVersion|CFBundleVersion)"' || true
+          echo "XCODE_BUILD=$(xcodebuild -version | awk '/Build version/{print $3}')"
+          echo "XCODE_VER=$(xcodebuild -version | head -1 | awk '{print $2}')"
+          echo "MACOS_BUILD=$(sw_vers -buildVersion)"
+
       - name: Compile sample, emitting .swiftconstvalues
         run: |
           set -eux

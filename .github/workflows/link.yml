@@ -61,7 +61,13 @@ jobs:
           # src/ext/ is the watch-face complication (a WidgetKit extension). It is its own
           # executable with its own @main, so it must NOT share a link with the app.
           if [ -n "$EXT_PRODUCT" ]; then
-            build "$EXT_PRODUCT" $(find src/ext -name '*.swift')
+            # An app extension's entry point is _NSExtensionMain, NOT the Swift @main's main
+            # (Xcode: LD_ENTRY_POINT = _NSExtensionMain for com.apple.product-type.app-extension).
+            # WidgetKit still finds the @main WidgetBundle through Swift protocol metadata. Enter at
+            # main instead and ExtensionFoundation traps (EXC_BREAKPOINT) the moment the main queue
+            # runs, so the widget never registers and no complication shows up in the gallery.
+            build "$EXT_PRODUCT" $(find src/ext -name '*.swift') \
+              -application-extension -Xlinker -e -Xlinker _NSExtensionMain
           fi
       - name: Icon fingerprint
         id: icon

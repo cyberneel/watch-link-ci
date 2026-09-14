@@ -1,0 +1,108 @@
+name: probe-widget
+# Throwaway diagnostic: what does Xcode ACTUALLY produce for a watchOS WidgetKit extension?
+on: { workflow_dispatch: {} }
+jobs:
+  probe:
+    runs-on: macos-latest
+    steps:
+      - name: Xcode templates for widget extensions
+        continue-on-error: true
+        run: |
+          X=$(xcode-select -p)/..
+          T="$X/Library/Xcode/Templates"
+          find "$T" -ipath '*Widget*' -maxdepth 8 | head -40
+          echo "===== template Info.plists ====="
+          for f in $(find "$T" -ipath '*Widget*' -name 'Info.plist' | head -10); do
+            echo "##### $f"; plutil -p "$f"
+          done
+          echo "===== TemplateInfo for widget ext ====="
+          for f in $(find "$T" -ipath '*Widget*' -name 'TemplateInfo.plist' | head -6); do
+            echo "##### $f"; plutil -p "$f" | head -120
+          done
+      - name: grep Xcode for widgetkit-extension specs
+        continue-on-error: true
+        run: |
+          X=$(xcode-select -p)
+          grep -rl "widgetkit-extension" "$X/Library" "$X/Platforms/WatchOS.platform" 2>/dev/null | head -20
+      - name: simulator runtimes
+        continue-on-error: true
+        run: xcrun simctl list runtimes
+      - name: Build a real watchOS app + widget extension
+        continue-on-error: true
+        run: |
+          set -eux
+          brew install xcodegen >/dev/null 2>&1 || brew install xcodegen
+          mkdir -p ProbeWatch ProbeWidget
+          cat > ProbeWatch/App.swift <<'EOF'
+          import SwiftUI
+          @main struct ProbeWatchApp: App { var body: some Scene { WindowGroup { Text("hi") } } }
+          EOF
+          cat > ProbeWidget/W.swift <<'EOF'
+          import WidgetKit
+          import SwiftUI
+          struct E: TimelineEntry { let date: Date }
+          struct P: TimelineProvider {
+            func placeholder(in c: Context) -> E { E(date: .now) }
+            func getSnapshot(in c: Context, completion: @escaping (E)->Void) { completion(E(date: .now)) }
+            func getTimeline(in c: Context, completion: @escaping (Timeline<E>)->Void) { completion(Timeline(entries: [E(date: .now)], policy: .never)) }
+          }
+          struct PW: Widget {
+            var body: some WidgetConfiguration {
+              StaticConfiguration(kind: "probe", provider: P()) { _ in Text("x").containerBackground(.clear, for: .widget) }
+                .supportedFamilies([.accessoryCircular])
+            }
+          }
+          @main struct B: WidgetBundle { var body: some Widget { PW() } }
+          EOF
+          cat > project.yml <<'EOF'
+          name: Probe
+          options:
+            bundleIdPrefix: com.example.probe
+            deploymentTarget: { watchOS: "26.0" }
+          settings:
+            base:
+              CODE_SIGNING_ALLOWED: NO
+              CODE_SIGNING_REQUIRED: NO
+              CODE_SIGN_IDENTITY: ""
+          targets:
+            ProbeWatch:
+              type: application
+              platform: watchOS
+              sources: [ProbeWatch]
+              info:
+                path: ProbeWatch/Info.plist
+                properties: { WKApplication: true }
+              dependencies: [{ target: ProbeWidget, embed: true }]
+            ProbeWidget:
+              type: app-extension
+              platform: watchOS
+              sources: [ProbeWidget]
+              info:
+                path: ProbeWidget/Info.plist
+                properties:
+                  NSExtension: { NSExtensionPointIdentifier: com.apple.widgetkit-extension }
+          EOF
+          xcodegen generate
+          xcodebuild -project Probe.xcodeproj -scheme ProbeWatch -sdk watchos \
+            -configuration Debug -derivedDataPath dd CODE_SIGNING_ALLOWED=NO build > build.log 2>&1 || true
+          echo "===== link + swiftc lines ====="
+          grep -nE "^\s+(/.*(clang|swift-frontend|swiftc|ld)\b)" build.log | head -8
+          grep -n "application_extension\|application-extension\|NSExtensionMain\|-e _" build.log | head -20
+          echo "===== tail of build log ====="
+          tail -40 build.log
+          echo "===== produced bundle ====="
+          find dd/Build/Products -name '*.app' -maxdepth 3
+          APP=$(find dd/Build/Products -name 'ProbeWatch.app' -maxdepth 3 | head -1)
+          find "$APP" | head -40
+          echo "===== appex Info.plist ====="
+          AX=$(find "$APP" -name '*.appex' | head -1); echo "APPEX=$AX"
+          plutil -p "$AX/Info.plist"
+          echo "===== appex mach-o ====="
+          otool -hv "$AX"/ProbeWidget
+          echo "===== watch app Info.plist ====="
+          plutil -p "$APP/Info.plist"
+      - name: key build settings for the extension target
+        continue-on-error: true
+        run: |
+          xcodebuild -project Probe.xcodeproj -target ProbeWidget -sdk watchos -showBuildSettings 2>/dev/null \
+            | grep -iE "APPLICATION_EXTENSION|PRODUCT_TYPE|WRAPPER|INSTALL_PATH|LD_RUNPATH|OTHER_LDFLAGS|MACH_O|ENTRY" | head -30
